@@ -94,25 +94,75 @@ def create_embed(title="", description="", color=None, config=None):
     return embed
 
 
-def has_role_or_higher(member, required_roles, config):
+PERMISSION_HIERARCHY = ["trial_moderator", "moderator", "supervisor", "administrator", "management"]
+
+PERMISSION_STEPS = {
+    "trial_moderator": {
+        "level": 1,
+        "label": "Trial Moderator",
+        "perms": ["view_infractions", "view_stats", "view_history"],
+    },
+    "moderator": {
+        "level": 2,
+        "label": "Moderator",
+        "perms": ["warn", "kick", "timeout", "issue_infractions", "purge", "nickname", "note", "slowmode"],
+    },
+    "supervisor": {
+        "level": 3,
+        "label": "Supervisor",
+        "perms": ["manage_infractions", "start_ssu", "end_ssu", "lock_channels", "ssu_actions"],
+    },
+    "administrator": {
+        "level": 4,
+        "label": "Administrator",
+        "perms": ["ban", "unban", "remove_infractions", "manage_sessions", "manage_config", "manage_appeals"],
+    },
+    "management": {
+        "level": 5,
+        "label": "Management",
+        "perms": ["all"],
+    },
+}
+
+ALL_PERMISSIONS = set()
+for role_config in PERMISSION_STEPS.values():
+    ALL_PERMISSIONS.update(role_config["perms"])
+
+
+def get_member_level(member, config):
     if not config or "roles" not in config:
-        return False
-    role_ids = config["roles"]
+        return 0
     if member.guild_permissions.administrator:
-        return True
-    hierarchy = ["trial_moderator", "moderator", "supervisor", "administrator", "management"]
-    req_idx = -1
-    for i, r in enumerate(hierarchy):
-        if r == required_roles:
-            req_idx = i
-            break
-    if req_idx == -1:
-        return False
-    for i in range(req_idx, len(hierarchy)):
-        role_id = role_ids.get(hierarchy[i], 0)
+        return 5
+    role_ids = config["roles"]
+    highest_level = 0
+    for role_name, role_config in PERMISSION_STEPS.items():
+        role_id = role_ids.get(role_name, 0)
         if role_id and member.get_role(role_id):
-            return True
+            if role_config["level"] > highest_level:
+                highest_level = role_config["level"]
+    return highest_level
+
+
+def has_permission(member, permission, config):
+    level = get_member_level(member, config)
+    if level >= 5:
+        return True
+    for role_name, role_config in PERMISSION_STEPS.items():
+        if role_config["level"] <= level:
+            if "all" in role_config["perms"]:
+                return True
+            if permission in role_config["perms"]:
+                return True
     return False
+
+
+def get_member_role_label(member, config):
+    level = get_member_level(member, config)
+    for role_name, role_config in reversed(PERMISSION_STEPS.items()):
+        if role_config["level"] == level:
+            return role_config["label"]
+    return "Member"
 
 
 def get_role_id(config, role_name):
@@ -176,3 +226,170 @@ INFRACTION_CATEGORIES = {
     "SSU Violations": 2,
     "Custom": 0,
 }
+
+ACTION_COLORS = {
+    "promotion": 0x57f287,
+    "demotion": 0xe67e22,
+    "warning": 0xfee75c,
+    "infraction": 0xe67e22,
+    "suspension": 0xed4245,
+    "termination": 0x8b0000,
+    "ssu": 0x5865f2,
+    "ssd": 0x808080,
+}
+
+
+def build_staff_action_embed(action_type, title, fields, action_id, moderator, config, target=None, thumbnail_url=None):
+    color = ACTION_COLORS.get(action_type, 0x2b2d31)
+    server_name = config.get("server_name", "Server")
+    mod_label = get_member_role_label(moderator, config)
+
+    embed = discord.Embed(
+        title="",
+        description=f"**Signed, {mod_label} | {moderator.display_name}**\n\n**{title}**",
+        color=color,
+        timestamp=datetime.utcnow()
+    )
+
+    bullet_text = ""
+    for label, value in fields:
+        bullet_text += f"• **{label}:** {value}\n"
+
+    embed.description += f"\n\n{bullet_text}"
+
+    if target:
+        embed.set_thumbnail(url=target.display_avatar.url)
+    elif thumbnail_url:
+        embed.set_thumbnail(url=thumbnail_url)
+
+    embed.set_footer(text=f"{server_name} • {action_id}")
+    return embed
+
+
+def build_infraction_embed(action_id, moderator, target_user, category, reason, points, evidence, total_points, config):
+    mod_label = get_member_role_label(moderator, config)
+    server_name = config.get("server_name", "Server")
+
+    embed = discord.Embed(
+        title="",
+        description=f"**Signed, {mod_label} | {moderator.display_name}**\n\n**Staff Infraction**",
+        color=ACTION_COLORS["infraction"],
+        timestamp=datetime.utcnow()
+    )
+
+    embed.description += f"\n\n• **Staff Member:** {target_user.mention}\n"
+    embed.description += f"• **Category:** {category}\n"
+    embed.description += f"• **Points:** {points}\n"
+    embed.description += f"• **Reason:** {reason}\n"
+    if evidence:
+        embed.description += f"• **Evidence:** {evidence}\n"
+    embed.description += f"• **Active Points:** {total_points}"
+
+    embed.set_thumbnail(url=target_user.display_avatar.url)
+    embed.set_footer(text=f"{server_name} • {action_id}")
+    return embed
+
+
+def build_warning_embed(action_id, moderator, target_user, reason, points, config):
+    mod_label = get_member_role_label(moderator, config)
+    server_name = config.get("server_name", "Server")
+
+    embed = discord.Embed(
+        title="",
+        description=f"**Signed, {mod_label} | {moderator.display_name}**\n\n**Staff Warning**",
+        color=ACTION_COLORS["warning"],
+        timestamp=datetime.utcnow()
+    )
+
+    embed.description += f"\n\n• **Staff Member:** {target_user.mention}\n"
+    embed.description += f"• **Points:** {points}\n"
+    embed.description += f"• **Reason:** {reason}\n"
+
+    embed.set_thumbnail(url=target_user.display_avatar.url)
+    embed.set_footer(text=f"{server_name} • {action_id}")
+    return embed
+
+
+def build_promotion_embed(action_id, moderator, target_user, previous_role, new_role, reason, config):
+    mod_label = get_member_role_label(moderator, config)
+    server_name = config.get("server_name", "Server")
+
+    embed = discord.Embed(
+        title="",
+        description=f"**Signed, {mod_label} | {moderator.display_name}**\n\n**Staff Promotion**",
+        color=ACTION_COLORS["promotion"],
+        timestamp=datetime.utcnow()
+    )
+
+    embed.description += f"\n\n• **Staff Member:** {target_user.mention}\n"
+    embed.description += f"• **Previous Role:** {previous_role}\n"
+    embed.description += f"• **New Role:** {new_role}\n"
+    embed.description += f"• **Reason:** {reason}"
+
+    embed.set_thumbnail(url=target_user.display_avatar.url)
+    embed.set_footer(text=f"{server_name} • {action_id}")
+    return embed
+
+
+def build_demotion_embed(action_id, moderator, target_user, previous_role, new_role, reason, config):
+    mod_label = get_member_role_label(moderator, config)
+    server_name = config.get("server_name", "Server")
+
+    embed = discord.Embed(
+        title="",
+        description=f"**Signed, {mod_label} | {moderator.display_name}**\n\n**Staff Demotion**",
+        color=ACTION_COLORS["demotion"],
+        timestamp=datetime.utcnow()
+    )
+
+    embed.description += f"\n\n• **Staff Member:** {target_user.mention}\n"
+    embed.description += f"• **Previous Role:** {previous_role}\n"
+    embed.description += f"• **New Role:** {new_role}\n"
+    embed.description += f"• **Reason:** {reason}"
+
+    embed.set_thumbnail(url=target_user.display_avatar.url)
+    embed.set_footer(text=f"{server_name} • {action_id}")
+    return embed
+
+
+def build_suspension_embed(action_id, moderator, target_user, duration_days, reason, related_infraction, config):
+    mod_label = get_member_role_label(moderator, config)
+    server_name = config.get("server_name", "Server")
+
+    embed = discord.Embed(
+        title="",
+        description=f"**Signed, {mod_label} | {moderator.display_name}**\n\n**Staff Suspension**",
+        color=ACTION_COLORS["suspension"],
+        timestamp=datetime.utcnow()
+    )
+
+    embed.description += f"\n\n• **Staff Member:** {target_user.mention}\n"
+    embed.description += f"• **Duration:** {duration_days} Days\n"
+    embed.description += f"• **Reason:** {reason}\n"
+    if related_infraction:
+        embed.description += f"• **Related Infraction:** {related_infraction}"
+
+    embed.set_thumbnail(url=target_user.display_avatar.url)
+    embed.set_footer(text=f"{server_name} • {action_id}")
+    return embed
+
+
+def build_termination_embed(action_id, moderator, target_user, total_points, active_infractions, reason, config):
+    mod_label = get_member_role_label(moderator, config)
+    server_name = config.get("server_name", "Server")
+
+    embed = discord.Embed(
+        title="",
+        description=f"**Signed, {mod_label} | {moderator.display_name}**\n\n**Staff Termination**",
+        color=ACTION_COLORS["termination"],
+        timestamp=datetime.utcnow()
+    )
+
+    embed.description += f"\n\n• **Staff Member:** {target_user.mention}\n"
+    embed.description += f"• **Total Points:** {total_points}\n"
+    embed.description += f"• **Active Infractions:** {active_infractions}\n"
+    embed.description += f"• **Reason:** {reason}"
+
+    embed.set_thumbnail(url=target_user.display_avatar.url)
+    embed.set_footer(text=f"{server_name} • {action_id}")
+    return embed

@@ -2,6 +2,8 @@ import sqlite3
 import os
 import json
 import logging
+import random
+import string
 from datetime import datetime
 
 logger = logging.getLogger("OrlandoBot.Database")
@@ -15,6 +17,10 @@ def get_connection():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def random_id(length=10):
+    return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 
 def initialize_database():
@@ -40,18 +46,81 @@ def initialize_database():
 
         CREATE TABLE IF NOT EXISTS infractions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            infraction_id TEXT UNIQUE NOT NULL,
+            action_id TEXT UNIQUE NOT NULL,
+            user_id INTEGER NOT NULL,
+            moderator_id INTEGER NOT NULL,
+            category TEXT NOT NULL DEFAULT 'Other',
+            reason TEXT NOT NULL,
+            points INTEGER NOT NULL DEFAULT 0,
+            evidence_link TEXT DEFAULT '',
+            timestamp TEXT DEFAULT (datetime('now')),
+            active INTEGER DEFAULT 1,
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (moderator_id) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS warnings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_id TEXT UNIQUE NOT NULL,
             user_id INTEGER NOT NULL,
             moderator_id INTEGER NOT NULL,
             reason TEXT NOT NULL,
-            timestamp TEXT DEFAULT (datetime('now')),
             points INTEGER NOT NULL DEFAULT 0,
-            category TEXT NOT NULL DEFAULT 'Other',
-            infraction_type TEXT NOT NULL DEFAULT 'Custom',
-            evidence_link TEXT DEFAULT '',
+            timestamp TEXT DEFAULT (datetime('now')),
             active INTEGER DEFAULT 1,
-            edited INTEGER DEFAULT 0,
-            edit_reason TEXT DEFAULT '',
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (moderator_id) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS promotions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_id TEXT UNIQUE NOT NULL,
+            user_id INTEGER NOT NULL,
+            moderator_id INTEGER NOT NULL,
+            previous_role TEXT NOT NULL DEFAULT '',
+            new_role TEXT NOT NULL DEFAULT '',
+            reason TEXT NOT NULL,
+            timestamp TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (moderator_id) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS demotions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_id TEXT UNIQUE NOT NULL,
+            user_id INTEGER NOT NULL,
+            moderator_id INTEGER NOT NULL,
+            previous_role TEXT NOT NULL DEFAULT '',
+            new_role TEXT NOT NULL DEFAULT '',
+            reason TEXT NOT NULL,
+            timestamp TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (moderator_id) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS suspensions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_id TEXT UNIQUE NOT NULL,
+            user_id INTEGER NOT NULL,
+            moderator_id INTEGER NOT NULL,
+            duration_days INTEGER NOT NULL DEFAULT 7,
+            reason TEXT NOT NULL,
+            related_infraction TEXT DEFAULT '',
+            timestamp TEXT DEFAULT (datetime('now')),
+            active INTEGER DEFAULT 1,
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (moderator_id) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS terminations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_id TEXT UNIQUE NOT NULL,
+            user_id INTEGER NOT NULL,
+            moderator_id INTEGER NOT NULL,
+            total_points INTEGER NOT NULL DEFAULT 0,
+            active_infractions INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL,
+            timestamp TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (user_id) REFERENCES users(user_id),
             FOREIGN KEY (moderator_id) REFERENCES users(user_id)
         );
@@ -66,6 +135,10 @@ def initialize_database():
             bans INTEGER DEFAULT 0,
             kicks INTEGER DEFAULT 0,
             warnings INTEGER DEFAULT 0,
+            promotions_issued INTEGER DEFAULT 0,
+            demotions_issued INTEGER DEFAULT 0,
+            suspensions_issued INTEGER DEFAULT 0,
+            terminations_issued INTEGER DEFAULT 0,
             last_action_date TEXT DEFAULT '',
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         );
@@ -73,15 +146,15 @@ def initialize_database():
         CREATE TABLE IF NOT EXISTS appeals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             appeal_id TEXT UNIQUE NOT NULL,
-            infraction_id TEXT NOT NULL,
+            action_id TEXT NOT NULL,
+            action_table TEXT NOT NULL,
             user_id INTEGER NOT NULL,
             reason TEXT NOT NULL,
             status TEXT DEFAULT 'pending',
             timestamp TEXT DEFAULT (datetime('now')),
             resolved_by INTEGER DEFAULT NULL,
             resolution_message TEXT DEFAULT '',
-            FOREIGN KEY (user_id) REFERENCES users(user_id),
-            FOREIGN KEY (infraction_id) REFERENCES infractions(infraction_id)
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
         );
 
         CREATE TABLE IF NOT EXISTS ssu_history (
@@ -137,12 +210,27 @@ def initialize_database():
 
 
 def get_next_infraction_id():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM infractions")
-    count = cursor.fetchone()[0]
-    conn.close()
-    return f"INF-{count + 1:06d}"
+    return f"INF-{random_id()}"
+
+
+def get_next_warning_id():
+    return f"WARN-{random_id()}"
+
+
+def get_next_promotion_id():
+    return f"PROM-{random_id()}"
+
+
+def get_next_demotion_id():
+    return f"DEMO-{random_id()}"
+
+
+def get_next_suspension_id():
+    return f"SUS-{random_id()}"
+
+
+def get_next_termination_id():
+    return f"TERM-{random_id()}"
 
 
 def get_next_session_id():
@@ -187,3 +275,27 @@ def ensure_staff_stats(user_id):
     cursor.execute("INSERT OR IGNORE INTO staff_stats (user_id) VALUES (?)", (user_id,))
     conn.commit()
     conn.close()
+
+
+def find_action_by_id(action_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    prefix = action_id.split("-")[0].upper() if "-" in action_id else ""
+    table_map = {
+        "INF": "infractions",
+        "WARN": "warnings",
+        "PROM": "promotions",
+        "DEMO": "demotions",
+        "SUS": "suspensions",
+        "TERM": "terminations",
+    }
+    table = table_map.get(prefix)
+    if not table:
+        conn.close()
+        return None, None
+    cursor.execute(f"SELECT * FROM {table} WHERE action_id = ?", (action_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return table, row
+    return None, None
