@@ -1,0 +1,40 @@
+{
+    "guild_id": 0,
+    "server_name": "Orlando",
+    "server_code": "SanDIEGO",
+    "max_players": 40,
+    "bot_status": "with SSU | /help",
+    "embed_colors": {
+        "primary": 2829595,
+        "success": 5763719,
+        "warning": 16705372,
+        "error": 15548997,
+        "info": 5793266
+    },
+    "roles": {
+        "trial_moderator": 0,
+        "moderator": 0,
+        "supervisor": 0,
+        "administrator": 0,
+        "management": 0,
+        "ssu_ping": 0
+    },
+    "channels": {
+        "mod_log": 0,
+        "infraction_log": 0,
+        "ssu_log": 0,
+        "lock_log": 0,
+        "ban_log": 0,
+        "staff_log": 0,
+        "error_log": 0
+    },
+    "thresholds": {
+        "reminder": 3,
+        "official_warning": 5,
+        "final_warning": 8,
+        "suspension_recommendation": 10,
+        "termination_recommendation": 15
+    },
+    "lock_message": "This channel has been locked by a moderator.",
+    "replit_keep_alive": true
+}
